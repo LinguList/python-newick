@@ -6,9 +6,11 @@ Functionality to read and write the Newick serialization format for trees.
 """
 from __future__ import unicode_literals
 import io
+import re
 
 
 RESERVED_PUNCTUATION = ':;,()'
+COMMENT = re.compile('\[[^\]]*\]')
 
 
 def length_parser(x):
@@ -46,7 +48,6 @@ class Node(object):
         self.ancestor = None
         self._length_parser = kw.pop('length_parser', length_parser)
         self._length_formatter = kw.pop('length_formatter', length_formatter)
-        self.length = length
 
     @property
     def length(self):
@@ -84,7 +85,7 @@ class Node(object):
         """The representation of the Node in Newick format."""
         label = self.name or ''
         if self._length:
-            label += ':' + self._length_formatter(self.length)
+            label += ':' + self._length
         descendants = ','.join([n.newick for n in self.descendants])
         if descendants:
             descendants = '(' + descendants + ')'
@@ -188,16 +189,18 @@ class Node(object):
         added to those of their children.
         """
         for n in self.walk(mode='postorder'):
-            if n.ancestor and len(n.ancestor.descendants) == 1:
+            while n.ancestor and len(n.ancestor.descendants) == 1:
                 grandfather = n.ancestor.ancestor
                 father = n.ancestor
                 if preserve_lengths: 
                     n.length += father.length
+                
                 if grandfather:
-                    for i,child in enumerate(grandfather.descendants):
+                    for i, child in enumerate(grandfather.descendants):
                         if child is father:
                             del grandfather.descendants[i]
                     grandfather.add_descendant(n)
+                    father.ancestor = None
                 else:
                     self.descendants = n.descendants
                     if preserve_lengths: 
@@ -215,7 +218,7 @@ class Node(object):
                 while len(n.descendants) > 1:
                     new.add_descendant(n.descendants.pop())
                 n.descendants.append(new)
-        assert self.is_binary
+        assert self.is_binary, "{:s} should be binary".format(self.newick)
 
     def remove_names(self):
         """
@@ -248,14 +251,17 @@ class Node(object):
             n.length = None
 
 
-def loads(s, **kw):
+def loads(s, strip_comments=False, **kw):
     """
     Load a list of trees from a Newick formatted string.
 
     :param s: Newick formatted string.
+    :param strip_comments: Flag signaling whether to strip comments enclosed in square \
+    brackets.
     :param kw: Keyword arguments are passed through to `Node.create`.
     :return: List of Node objects.
     """
+    kw['strip_comments'] = strip_comments
     return [parse_node(ss.strip(), **kw) for ss in s.split(';') if ss.strip()]
 
 
@@ -271,14 +277,17 @@ def dumps(trees):
     return ';\n'.join([tree.newick for tree in trees]) + ';'
 
 
-def load(fp, **kw):
+def load(fp, strip_comments=False, **kw):
     """
     Load a list of trees from an open Newick formatted file.
 
     :param fp: open file handle.
+    :param strip_comments: Flag signaling whether to strip comments enclosed in square \
+    brackets.
     :param kw: Keyword arguments are passed through to `Node.create`.
     :return: List of Node objects.
     """
+    kw['strip_comments'] = strip_comments
     return loads(fp.read(), **kw)
 
 
@@ -286,14 +295,17 @@ def dump(tree, fp):
     fp.write(dumps(tree))
 
 
-def read(fname, encoding='utf8', **kw):
+def read(fname, encoding='utf8', strip_comments=False, **kw):
     """
     Load a list of trees from a Newick formatted file.
 
     :param fname: file path.
+    :param strip_comments: Flag signaling whether to strip comments enclosed in square \
+    brackets.
     :param kw: Keyword arguments are passed through to `Node.create`.
     :return: List of Node objects.
     """
+    kw['strip_comments'] = strip_comments
     with io.open(fname, encoding=encoding) as fp:
         return load(fp, **kw)
 
@@ -330,14 +342,18 @@ def _parse_siblings(s, **kw):
             current.append(c)
 
 
-def parse_node(s, **kw):
+def parse_node(s, strip_comments=False, **kw):
     """
     Parse a Newick formatted string into a `Node` object.
 
     :param s: Newick formatted string to parse.
+    :param strip_comments: Flag signaling whether to strip comments enclosed in square \
+    brackets.
     :param kw: Keyword arguments are passed through to `Node.create`.
     :return: `Node` instance.
     """
+    if strip_comments:
+        s = COMMENT.sub('', s)
     s = s.strip()
     parts = s.split(')')
     if len(parts) == 1:
@@ -345,6 +361,8 @@ def parse_node(s, **kw):
     else:
         if not parts[0].startswith('('):
             raise ValueError('unmatched braces %s' % parts[0][:100])
-        descendants, label = list(_parse_siblings(')'.join(parts[:-1], **kw)[1:])), parts[-1]
+        descendants = list(_parse_siblings(')'.join(parts[:-1])[1:], **kw))
+        label = parts[-1]
     name, length = _parse_name_and_length(label)
     return Node.create(name=name, length=length, descendants=descendants, **kw)
+

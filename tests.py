@@ -141,11 +141,21 @@ class Tests(TestCase):
         tree.remove_redundant_nodes()
         self.assertFalse(any([len(n.descendants) == 1 for n in tree.walk()]))
 
+    def test_prune_and_node_removal(self):
         tree2 = loads("((A:1,B:1):1,C:1)")[0]
         tree2.prune_by_names(['A'])
-        assert tree2.newick == '((B:1.0):1.0,C:1.0)'
+        self.assertEqual(tree2.newick, '((B:1):1,C:1)')
         tree2.remove_redundant_nodes()
-        assert tree2.newick == '(C:1.0,B:2.0)'
+        self.assertEqual(tree2.newick, '(C:1,B:2.0)')
+
+    def test_stacked_redundant_node_removal(self):
+        tree = loads("(((((A,B))),C))")[0]
+        tree.remove_redundant_nodes(preserve_lengths=False)
+        self.assertEqual(tree.newick, "(C,(A,B))")
+
+        tree = loads("(((A,B):1):2)")[0]
+        tree.remove_redundant_nodes()
+        self.assertEqual(tree.newick, '(A,B):3.0')
 
     def test_polytomy_resolution(self):
         tree = loads('(A,B,(C,D,(E,F)))')[0]
@@ -189,3 +199,11 @@ class Tests(TestCase):
         self.assertEqual(len(list(tree.walk())), 11)
         tree.remove_redundant_nodes()
         self.assertEqual(len(list(tree.walk())), 9)
+
+    def test_comments(self):
+        t = '[&R] (A,B)C [% ] [% ] [%  setBetweenBits = selected ];'
+        with self.assertRaises(ValueError):
+            loads(t)
+        tree = loads(t, strip_comments=True)[0]
+        self.assertEqual(len(list(tree.walk())), 3)
+
